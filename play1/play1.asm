@@ -113,6 +113,64 @@
 ;;;; inlined for the sake of performance and not jumping and pushing/popping to the stack
 ;;;; but we'll do it anyway for the sake of implementing an almost functional approach to ASM.
 
+;; global _main
+;; default rel
+;;
+;; section .bss
+;;   buffer resb 20
+;;
+;; section .text
+;; _main:
+;;   ; 1. Setup arguments and call add_numbers
+;;   mov rdi, 15         ; Argument 1
+;;   mov rsi, 27         ; Argument 2
+;;   call add_numbers    ; ! This is wasteful and would be much faster inlined!
+;;
+;;   ; 2. Setup arguments and call print_integer
+;;   mov rdi, rax        ; The print_integer subroutine expects the number in rdi
+;;   call print_integer  ; Jump to subroutine
+;;
+;;   ; 3. Setup arguments and exit
+;;   mov rdi, 0          ; Exit code 0
+;;   call exit_program   ; ! This is very wasteful given its 2 opcodes. Don't do in normal code. !
+;;
+;; add_numbers:
+;;   mov rax, rdi  ; Move the first number into our return register
+;;   add rax, rsi  ; Add the second number to rax
+;;   ret           ; Return to where we were called from
+;;
+;; print_integer:
+;;   mov rax, rdi ; Move out target number into rax for division
+;;   lea rsi, [rel buffer]
+;;   add rsi, 19
+;;   mov byte [rsi], 10 ; Newline char
+;;   mov rcx, 1
+;;   mov r8, 10
+;;
+;; .convert_loop:
+;;   xor rdx, rdx
+;;   div r8
+;;   add dl, '0'
+;;   dec rsi
+;;   mov [rsi], dl
+;;   inc rcx
+;;   test rax, rax
+;;   jnz .convert_loop
+;;
+;;   mov rax, 0x2000004  ; sys_write
+;;   mov rdi, 1          ; stdout
+;;   mov rdx, rcx        ; string length
+;;   syscall             ; rsi is already pointing to start of string from loop
+;;   ret                 ; return to _main
+;;
+;; exit_program:
+;;   mov rax, 0x2000001 ; sys_exit
+;;   syscall ; rdi already holds our exit code from when we called this syscall
+;;   ; No `ret` needed, the OS kills the program
+
+;;;; --------------------------------------------------------------------------------------- Example 5
+;;;; Let's optimize Example 4 for performance, while still keeping some code organization
+
 global _main
 default rel
 
@@ -121,23 +179,17 @@ section .bss
 
 section .text
 _main:
-  ; 1. Setup arguments and call add_numbers
-  mov rdi, 15         ; Argument 1
-  mov rsi, 27         ; Argument 2
-  call add_numbers    ; ! This is wasteful and would be much faster inlined!
+  ; 1. Add numbers
+  mov rdi, 15
+  add rdi, 27
 
-  ; 2. Setup arguments and call print_integer
-  mov rdi, rax        ; The print_integer subroutine expects the number in rdi
+  ; 2. Print integer
   call print_integer  ; Jump to subroutine
 
-  ; 3. Setup arguments and exit
+  ; 3. Exit 0
   mov rdi, 0          ; Exit code 0
-  call exit_program   ; ! This is very wasteful given its 2 opcodes. Don't do in normal code. !
-
-add_numbers:
-  mov rax, rdi  ; Move the first number into our return register
-  add rax, rsi  ; Add the second number to rax
-  ret           ; Return to where we were called from
+  mov rax, 0x2000001 ; sys_exit
+  syscall ; rdi already holds our exit code from when we called this syscall
 
 print_integer:
   mov rax, rdi ; Move out target number into rax for division
@@ -162,21 +214,3 @@ print_integer:
   mov rdx, rcx        ; string length
   syscall             ; rsi is already pointing to start of string from loop
   ret                 ; return to _main
-
-exit_program:
-  mov rax, 0x2000001 ; sys_exit
-  syscall ; rdi already holds our exit code from when we called this syscall
-  ; No `ret` needed, the OS kills the program
-
-
-
-
-
-
-
-
-
-
-
-
-
