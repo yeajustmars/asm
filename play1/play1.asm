@@ -1,0 +1,124 @@
+; Play1: playing around with ASM
+
+;;;; --------------------------------------------------------------------------------------- Example 1
+;;;; Print "Hello, World!"
+
+;; global _main
+;; default rel                 ; This fixes your absolute address error
+;;
+;; section .data
+;;     msg db 'Hello, World!'
+;;
+;; section .text
+;; _main:
+;;     ; syscall: sys_write
+;;     mov rax, 0x2000004      ; macOS x86_64 syscalls add 0x2000000 to the class! 4 = write
+;;     mov rdi, 1              ; file descriptor: stdout
+;;     lea rsi, [msg]          ; Load Effective Address (relative pointer to message)
+;;     mov rdx, 13             ; message length
+;;     syscall                 ; macOS 64-bit uses 'syscall', not 'int 0x80'
+;;
+;;     ; syscall: sys_exit
+;;     mov rax, 0x2000001      ; 1 = exit
+;;     xor rdi, rdi            ; exit code: 0
+;;     syscall
+
+;;;; --------------------------------------------------------------------------------------- Example 2
+;;;; Add 2 numbers and return the result as the exit code
+
+;; global _main
+;; default rel
+;;
+;; section .text
+;; _main:
+;;   ; 1. Load our 2 numbers into registers
+;;   mov rax, 15           ; Put the number 15 into register rax
+;;   mov rbx, 27           ; Put the number 27 into register rbx
+;;
+;;   ; 2. Add them together
+;;   add rax, rbx          ; Add rbx to rax. The result (42) is stored in rax
+;;
+;;   ; 3. Setup the the exit syscall
+;;   ; In macOS x86_64, the 'rdi' register holds the exit status code
+;;   mov rdi, rax          ; So, we move our sum from 'rax' into 'rdi'
+;;
+;;   ; 4. Call the kernel to exit
+;;   mov rax, 0x2000001    ; macOS x86_64 syscall for 'exit'
+;;   syscall
+
+
+;;;; --------------------------------------------------------------------------------------- Example 3
+;;;; Add 2 numbers and print them as ASCII output, returning a successful status code of zero
+
+global _main
+default rel
+
+; We need a place in memory to store our our converted ASCII string before printing it
+; The .bss section is used for reserving uninitialized memory
+
+section .bss
+  buffer resb 20    ; Reserve a 20-byte buffer for our output string
+
+section .text
+_main:
+  ; 1. Do the math
+
+  mov rax, 15
+  mov rbx, 27
+  add rax, rbx ; rax now holds 42
+
+  ; 2. Convert integer to string
+  ; We will fill our buffer from the back to the front
+
+  lea  rsi, [rel buffer]  ; Load the base address of our buffer
+  add rsi, 19             ; Move the pointer to the very end of the 20-byte buffer
+  mov byte [rsi], 10      ; Put a newline char at the end of the buffer
+
+  mov rcx, 1              ; This will be our string length counter (starts at 1 for the newline char)
+  mov r8, 10              ; Divide by 10 to isolate digits
+
+.convert_loop:
+  xor rdx, rdx      ; Clear rdx. The 'div' instruction divides rdx:rdx by r8
+                    ; If we don't clear rdx, it will create a math fault
+
+  div r8            ; rax = rax / 10 (quotient), rdx = rdx % 10 (remainder)
+
+  add dl, '0'       ; Convert the ramainder in dl to is ASCII character
+
+  dec rsi           ; Move our buffer pointer backwards by 1 byte
+  mov [rsi], dl     ; Store the ASCII char in the buffer
+  inc rcx           ; Increment our string length counter
+
+  test rax, rax     ; Check if quotient (rax) is zero
+  jnz .convert_loop ; If it's not 0 (Jump if not zero), keep looping
+
+  ; 3. Print the string
+  ; Right now, rsi is pointing to the exact start of our newly formed string in the buffer
+  ; and rcx  holds the exact length of the string
+
+  mov rax, 0x2000004  ; macOS x86_64 syscall: sys_write
+  mov rdi, 1          ; file descriptor: 1 (stdout)
+                      ; rsi already contains the pointer to the start of our string
+  mov rdx, rcx        ; Length of the string
+  syscall
+
+  ; 4. Exit cleanly
+  mov rax, 0x2000001  ; macOS x86_64 syscall: sys_exit
+  xor rdi, rdi        ; exit status 0 (xor a register with itself zeroes it out efficiently)
+  syscall
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
