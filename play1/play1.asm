@@ -171,46 +171,136 @@
 ;;;; --------------------------------------------------------------------------------------- Example 5
 ;;;; Let's optimize Example 4 for performance, while still keeping some code organization
 
+;; global _main
+;; default rel
+;;
+;; section .bss
+;;   buffer resb 20
+;;
+;; section .text
+;; _main:
+;;   ; 1. Add numbers
+;;   mov rdi, 15
+;;   add rdi, 27
+;;
+;;   ; 2. Print integer
+;;   call print_integer  ; Jump to subroutine
+;;
+;;   ; 3. Exit 0
+;;   mov rdi, 0          ; Exit code 0
+;;   mov rax, 0x2000001 ; sys_exit
+;;   syscall ; rdi already holds our exit code from when we called this syscall
+;;
+;; print_integer:
+;;   mov rax, rdi ; Move out target number into rax for division
+;;   lea rsi, [rel buffer]
+;;   add rsi, 19
+;;   mov byte [rsi], 10 ; Newline char
+;;   mov rcx, 1
+;;   mov r8, 10
+;;
+;; .convert_loop:
+;;   xor rdx, rdx
+;;   div r8
+;;   add dl, '0'
+;;   dec rsi
+;;   mov [rsi], dl
+;;   inc rcx
+;;   test rax, rax
+;;   jnz .convert_loop
+;;
+;;   mov rax, 0x2000004  ; sys_write
+;;   mov rdi, 1          ; stdout
+;;   mov rdx, rcx        ; string length
+;;   syscall             ; rsi is already pointing to start of string from loop
+;;   ret                 ; return to _main
+
+
+;;;; --------------------------------------------------------------------------------------- Example 6
+;;;; Remove global vars and use the stack for local vars
+
 global _main
 default rel
 
-section .bss
-  buffer resb 20
-
 section .text
 _main:
-  ; 1. Add numbers
-  mov rdi, 15
-  add rdi, 27
+    ; 1. Add numbers
+    mov rdi, 15
+    add rdi, 27         ; rdi now holds 42
 
-  ; 2. Print integer
-  call print_integer  ; Jump to subroutine
+    ; 2. Print integer
+    call print_integer
 
-  ; 3. Exit 0
-  mov rdi, 0          ; Exit code 0
-  mov rax, 0x2000001 ; sys_exit
-  syscall ; rdi already holds our exit code from when we called this syscall
+    ; 3. Exit 0
+    mov rdi, 0
+    mov rax, 0x2000001  ; sys_exit
+    syscall
 
+; =========================================================
+; Subroutine: print_integer
+; =========================================================
 print_integer:
-  mov rax, rdi ; Move out target number into rax for division
-  lea rsi, [rel buffer]
-  add rsi, 19
-  mov byte [rsi], 10 ; Newline char
-  mov rcx, 1
-  mov r8, 10
+    ; -----------------------------------------
+    ; 1. PROLOGUE (Setup Stack Frame)
+    ; -----------------------------------------
+    push rbp            ; Save caller's base pointer anchor
+    mov rbp, rsp        ; Set our own anchor to the current top of the stack
+
+    ; Allocate Local Variable: A 32-byte string buffer
+    sub rsp, 32         ; Grow the stack downwards by 32 bytes
+
+    ; -----------------------------------------
+    ; 2. SAVE STATE
+    ; -----------------------------------------
+    push rax
+    push rcx
+    push rdx
+    push rsi
+    push r8
+    push rdi
+
+    ; -----------------------------------------
+    ; 3. DO THE WORK
+    ; -----------------------------------------
+    mov rax, rdi        ; The number to divide
+    mov r8, 10          ; Divisor
+
+    ; SETUP BUFFER POINTER USING RBP
+    ; rbp is our anchor. The 32 bytes directly below it belong to us.
+    ; rbp - 1 is the very "bottom" (highest memory address) of our local buffer.
+    lea rsi, [rbp - 1]
+    mov byte [rsi], 10  ; Newline character
+    mov rcx, 1          ; Length counter
 
 .convert_loop:
-  xor rdx, rdx
-  div r8
-  add dl, '0'
-  dec rsi
-  mov [rsi], dl
-  inc rcx
-  test rax, rax
-  jnz .convert_loop
+    xor rdx, rdx
+    div r8
+    add dl, '0'
+    dec rsi             ; Move backwards through our local stack frame
+    mov [rsi], dl
+    inc rcx
+    test rax, rax
+    jnz .convert_loop
 
-  mov rax, 0x2000004  ; sys_write
-  mov rdi, 1          ; stdout
-  mov rdx, rcx        ; string length
-  syscall             ; rsi is already pointing to start of string from loop
-  ret                 ; return to _main
+    ; Print syscall
+    mov rax, 0x2000004  ; sys_write
+    mov rdi, 1          ; stdout
+    mov rdx, rcx        ; length
+    syscall             ; rsi already points to our string on the stack
+
+    ; -----------------------------------------
+    ; 4. RESTORE STATE
+    ; -----------------------------------------
+    pop rdi
+    pop r8
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rax
+
+    ; -----------------------------------------
+    ; 5. EPILOGUE (Tear down Stack Frame)
+    ; -----------------------------------------
+    mov rsp, rbp        ; Instantly releases our 32-byte buffer!
+    pop rbp             ; Restore the caller's anchor
+    ret
